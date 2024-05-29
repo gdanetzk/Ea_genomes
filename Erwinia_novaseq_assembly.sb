@@ -1,0 +1,52 @@
+#!/bin/bash --login
+
+#cd /mnt/home/Erwinia_genomes/
+#tar -czcf Ea_R1_clean.fq.gz Ea_R1_clean.fq 
+#tar -czcf Ea_R2_clean.fq.gz Ea_R2_clean.fq 
+
+
+cd /mnt/scratch/Erwinia_Mi/
+#### Move and rename files 
+#cp /mnt/research/PhageNovaSeq/6_1_S6_L004_R1_001.fastq.gz /mnt/scratch/Erwinia_Mi/Ea_S6_L004_R1_001.fastq.gz
+#cp /mnt/research/PhageNovaSeq/6_1_S6_L004_R2_001.fastq.gz /mnt/scratch/Erwinia_Mi/Ea_S6_L004_R2_001.fastq.gz
+
+### Trim sequences
+conda activate BBTools
+bbduk.sh in1=Ea_S6_L004_R1_001.fastq.gz in2=Ea_S6_L004_R2_001.fastq.gz out1=Ea_R1_q20.fastq.gz out2=Ea_R2_q20.fastq.gz qtrim=rl trimq=20 minlength=100 tossjunk=f
+
+### Remove universal Illumina adapters
+bbduk.sh in1=Ea_R1_q20.fastq.gz in2=Ea_R2_q20.fastq.gz out1=Ea_R1_clean.fq out2=Ea_R2_clean.fq ref=/mnt/home/anaconda3/envs/BBTools/bbtools/lib/resources/adapters.fa hdist=1 tpe tbo
+
+### Generate new FastQC reports
+conda activate FastQC
+fastqc Ea_R1_clean.fq Ea_R2_clean.fq -o FastQC/
+conda deactivate 
+
+## Bacteria isolate assembly 
+conda activate SPAdes
+spades.py -m 320 -t 32 --isolate -1 Ea_R1_q20.fastq.gz -2 Ea_R2_q20.fastq.gz -o Ea/  
+conda deactivate 
+
+## Map contigs and scaffolds to reference
+conda activate MiniMap2
+# MiniMap2 index of host genome (Ea ATCC 49946)
+minimap2 -d /mnt/home/Erwinia_genomes/Ea49946.mmi /mnt/home/Erwinia_genomes/Erwinia_amylovora_ATCC_49946.gff 
+# Map contigs to reference 
+minimap2 -ax asm5 /mnt/home/Erwinia_genomes/Ea49946.mmi Ea/contigs.fasta > Ea/Ea49946_6_1.sam 
+conda deactivate 
+
+## Circulize with Unicycler
+conda activate Unicycler
+unicycler --short1 Ea_R1_clean.fq --short2 Ea_R2_clean.fq --mode normal --keep 2 --threads 16 -o Unicycler3/
+conda deactivate 
+
+### Map new contigs to reference 
+conda activate MiniMap2
+minimap2 -ax asm5 /mnt/home/Erwinia_genomes/Ea49946.mmi Unicycler3/assembly.fasta > Unicycler3/Ea49946_6_1.sam 
+conda deactivate 
+
+## Prokka annotation on unicycler assemblies 
+conda activate PROKKA
+# shorten contig names for prokka <37 characters 
+prokka --outdir Annotations/ --force --prefix Ea Unicycler3/assembly.fasta --Kingdom Bacteria --genus Erwinia --species amylovora --plasmid pEA29 --usegenus --addgenes --addmrna
+conda deactivate 
